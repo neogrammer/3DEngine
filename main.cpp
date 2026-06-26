@@ -30,7 +30,7 @@ float fov;
 float fovRad;
 float zFar;
 float zNear;
-
+float theta;
 
 bool update(float dt_);
 void MultMatVec(v3d& i, v3d& o, m4x4& m);
@@ -119,6 +119,7 @@ int main()
 				wnd.close();
 				return 1;
 			}
+			theta += 1.f * FPS;
 		
 			dt -= FPS;
 		}
@@ -127,14 +128,40 @@ int main()
 		{
 			wnd.clear();
 
-			for (const auto& tri : meshCube.tris)
-			{
-				triangle triProjected, triTranslated;
+			m4x4 matRotZ, matRotX;
+			
 
-				triTranslated = tri;
-				triTranslated.p[0].z = tri.p[0].z + 3.f;
-				triTranslated.p[1].z = tri.p[1].z + 3.f;
-				triTranslated.p[2].z = tri.p[2].z + 3.f;
+			matRotZ.m[0][0] = cosf(theta);
+			matRotZ.m[0][1] = sinf(theta);
+			matRotZ.m[1][0] = -sinf(theta);
+			matRotZ.m[1][1] = cosf(theta);
+			matRotZ.m[2][2] = 1.f;
+			matRotZ.m[3][3] = 1.f;
+
+			matRotX.m[0][0] = 1.f;
+			matRotX.m[1][1] = cosf(theta * 0.5f);
+			matRotX.m[1][2] = sinf(theta * 0.5f);
+			matRotX.m[2][1] = -sinf(theta * 0.5f);
+			matRotX.m[2][2] = cosf(theta * 0.5f);
+			matRotX.m[3][3] = 1.f;
+
+
+			for (auto tri : meshCube.tris)
+			{
+				triangle triProjected, triTranslated, triRotatedZ, triRotatedZX;
+
+				MultMatVec(tri.p[0], triRotatedZ.p[0], matRotZ);
+				MultMatVec(tri.p[1], triRotatedZ.p[1], matRotZ);
+				MultMatVec(tri.p[2], triRotatedZ.p[2], matRotZ);
+
+				MultMatVec(triRotatedZ.p[0], triRotatedZX.p[0], matRotX);
+				MultMatVec(triRotatedZ.p[1], triRotatedZX.p[1], matRotX);
+				MultMatVec(triRotatedZ.p[2], triRotatedZX.p[2], matRotX);
+
+				triTranslated = triRotatedZX;
+				triTranslated.p[0].z = triRotatedZX.p[0].z + 3.f;
+				triTranslated.p[1].z = triRotatedZX.p[1].z + 3.f;
+				triTranslated.p[2].z = triRotatedZX.p[2].z + 3.f;
 
 				MultMatVec(triTranslated.p[0], triProjected.p[0], matProj);
 				MultMatVec(triTranslated.p[1], triProjected.p[1], matProj);
