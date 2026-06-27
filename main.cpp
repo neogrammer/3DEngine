@@ -4,6 +4,13 @@
 #include <algorithm>
 #include <cstdint>
 
+#include <fstream>
+#include <strstream>
+
+#include <limits>
+#include <cmath>
+#include <unordered_map>
+
 
 using namespace std;
 
@@ -16,6 +23,8 @@ struct triangle
 {
 	v3d p[3];
 
+	int vi[3] = { -1, -1, -1 };
+
 	wchar_t sym;
 	short col;
 };
@@ -23,6 +32,53 @@ struct triangle
 struct mesh
 {
 	vector<triangle> tris;
+
+	bool LoadObjectFile(string filename)
+	{
+		ifstream f(filename);
+		if (!f.is_open())
+		{
+			return false;
+		}
+
+		vector<v3d> verts;
+
+		while (!f.eof())
+		{
+			char line[128];
+			f.getline(line, 128);
+
+			strstream s;
+			s << line;
+
+			char junk;
+
+			if (line[0] == 'v')
+			{
+				v3d v;
+				s >> junk >> v.x >> v.y >> v.z;
+				verts.push_back(v);
+			}
+			if (line[0] == 'f')
+			{
+				int f[3];
+				s >> junk >> f[0] >> f[1] >> f[2];
+
+				triangle tri;
+				tri.p[0] = verts[f[0] - 1];
+				tri.p[1] = verts[f[1] - 1];
+				tri.p[2] = verts[f[2] - 1];
+
+				tri.vi[0] = f[0] - 1;
+				tri.vi[1] = f[1] - 1;
+				tri.vi[2] = f[2] - 1;
+
+				tris.push_back(tri);
+			}
+		}
+
+		return true;
+	}
 };
 
 struct m4x4
@@ -34,17 +90,45 @@ struct TriangleToRaster
 {
 	v3d p[3];
 	float lum = 0.f;
-	float avgDepth = 0.f;
+	//float avgDepth = 0.f;
 	size_t meshTriIndex = 0;
 };
+constexpr size_t INVALID_TRI_INDEX = std::numeric_limits<size_t>::max();
 
+struct MeshEdge
+{
+	int v0 = -1;
+	int v1 = -1;
+
+	size_t triA = INVALID_TRI_INDEX;
+	size_t triB = INVALID_TRI_INDEX;
+
+	int edgeA = -1;
+	int edgeB = -1;
+};
+
+std::vector<MeshEdge> meshEdges;
+
+std::vector<TriangleToRaster> rasterByMeshTri;
+std::vector<bool> rasterValidByMeshTri;
+std::vector<v3d> normalByMeshTri;
 
 mesh meshCube;
 m4x4 matProj;
 
 v3d camera;
 
-float width, height;
+constexpr unsigned SCREEN_W = 1600;
+constexpr unsigned SCREEN_H = 900;
+
+constexpr float width = 1600.f;
+constexpr float height = 900.f;
+
+std::vector<std::uint8_t> framePixels(SCREEN_W* SCREEN_H * 4);
+std::vector<float> depthBuffer(SCREEN_W* SCREEN_H);
+
+sf::Texture frameTexture(sf::Vector2u{ SCREEN_W, SCREEN_H });
+
 float aspect;
 float fov;
 float fovRad;
@@ -67,41 +151,52 @@ void DrawOuterFaceEdges(
 	const sf::Vector2f& p2,
 	size_t meshTriIndex
 );
-
-
+float EdgeFunction(const v3d& a, const v3d& b, float x, float y);
+void ClearSoftwareFrame();
+void PutPixelDepth(int x, int y, float z, std::uint8_t r, std::uint8_t g, std::uint8_t b);
+void RasterizeTriangleDepth(const TriangleToRaster& tri);
+void PutPixelLineIfVisible(int x, int y, float z);
+void RasterizeLineDepth(const v3d& a, const v3d& b);
+void RasterizeTriangleEdgesDepth(const TriangleToRaster& tri);
+std::uint64_t MakeEdgeKey(int a, int b);
+void BuildMeshEdges(const mesh& m);
+float Dot(const v3d& a, const v3d& b);
+void RasterizeVisibleMeshOutlineDepth();
 
 
 int main()
 {
 
-	meshCube.tris = {
-		// South
-		{0.f,0.f,0.f, 0.f,1.f,0.f, 1.f,1.f,0.f},
-		{0.f,0.f,0.f, 1.f,1.f,0.f, 1.f,0.f,0.f},
+	//meshCube.tris = {
+	//	// South
+	//	{0.f,0.f,0.f, 0.f,1.f,0.f, 1.f,1.f,0.f},
+	//	{0.f,0.f,0.f, 1.f,1.f,0.f, 1.f,0.f,0.f},
 
-		// East
-		{1.f,0.f,0.f,  1.f,1.f,0.f,  1.f,1.f,1.f},
-		{1.f,0.f,0.f,  1.f,1.f,1.f,  1.f,0.f,1.f},
+	//	// East
+	//	{1.f,0.f,0.f,  1.f,1.f,0.f,  1.f,1.f,1.f},
+	//	{1.f,0.f,0.f,  1.f,1.f,1.f,  1.f,0.f,1.f},
 
-		// North
-		{1.f,0.f,1.f,  1.f,1.f,1.f,  0.f,1.f,1.f},
-		{1.f,0.f,1.f,  0.f,1.f,1.f,  0.f,0.f,1.f},
+	//	// North
+	//	{1.f,0.f,1.f,  1.f,1.f,1.f,  0.f,1.f,1.f},
+	//	{1.f,0.f,1.f,  0.f,1.f,1.f,  0.f,0.f,1.f},
 
 
-		// West
-		{0.f,0.f,1.f,  0.f,1.f,1.f,  0.f,1.f,0.f},
-		{0.f,0.f,1.f,  0.f,1.f,0.f,  0.f,0.f,0.f},
+	//	// West
+	//	{0.f,0.f,1.f,  0.f,1.f,1.f,  0.f,1.f,0.f},
+	//	{0.f,0.f,1.f,  0.f,1.f,0.f,  0.f,0.f,0.f},
 
-		// Top
-		{0.f,1.f,0.f,  0.f,1.f,1.f,  1.f,1.f,1.f},
-		{0.f,1.f,0.f,  1.f,1.f,1.f,  1.f,1.f,0.f},
+	//	// Top
+	//	{0.f,1.f,0.f,  0.f,1.f,1.f,  1.f,1.f,1.f},
+	//	{0.f,1.f,0.f,  1.f,1.f,1.f,  1.f,1.f,0.f},
 
-		// Bottom
-		{0.f,0.f,1.f,  0.f,0.f,0.f,  1.f,0.f,0.f},
-		{0.f,0.f,1.f,  1.f,0.f,0.f,  1.f,0.f,1.f},
-	};
-	width = 1600.f;
-	height = 900.f;
+	//	// Bottom
+	//	{0.f,0.f,1.f,  0.f,0.f,0.f,  1.f,0.f,0.f},
+	//	{0.f,0.f,1.f,  1.f,0.f,0.f,  1.f,0.f,1.f},
+	//};
+
+	meshCube.LoadObjectFile("assets/models/spaceship/spaceship.obj");
+	BuildMeshEdges(meshCube);
+
 	// Projection Matrix
 	zNear = 0.1f;
 	zFar = 1000.f;
@@ -192,9 +287,17 @@ bool update(float dt_)
 	matRotX.m[1][2] = sinf(theta * 0.5f);
 	matRotX.m[2][1] = -sinf(theta * 0.5f);
 	matRotX.m[2][2] = cosf(theta * 0.5f);
+	matRotX.m[3][3] = 1.f;
 
 	trisToRaster.clear();
+	rasterByMeshTri.clear();
+	rasterByMeshTri.resize(meshCube.tris.size());
 
+	rasterValidByMeshTri.clear();
+	rasterValidByMeshTri.resize(meshCube.tris.size(), false);
+
+	normalByMeshTri.clear();
+	normalByMeshTri.resize(meshCube.tris.size());
 	// Transform, cull, light, project
 	for (size_t triIndex = 0; triIndex < meshCube.tris.size(); ++triIndex)
 	{
@@ -239,9 +342,13 @@ bool update(float dt_)
 			normal.z * normal.z
 		);
 
+
+
 		normal.x /= normalLength;
 		normal.y /= normalLength;
 		normal.z /= normalLength;
+
+		normalByMeshTri[triIndex] = normal;
 
 		// Backface culling
 		float cameraRayDot =
@@ -298,54 +405,37 @@ bool update(float dt_)
 			rasterTri.lum = dp;
 			rasterTri.meshTriIndex = triIndex;
 
-			rasterTri.avgDepth =
-				(triTranslated.p[0].z +
-					triTranslated.p[1].z +
-					triTranslated.p[2].z) / 3.f;
+			rasterByMeshTri[triIndex] = rasterTri;
+			rasterValidByMeshTri[triIndex] = true;
 
 			trisToRaster.push_back(rasterTri);
 		}
 	}
-
-	// Painter's sort: draw farther triangles first
-	std::sort(
-		trisToRaster.begin(),
-		trisToRaster.end(),
-		[](const TriangleToRaster& a, const TriangleToRaster& b)
-		{
-			return a.avgDepth > b.avgDepth;
-		}
-	);
 
 	return true;
 }
 
 void render(sf::RenderWindow& wnd)
 {
-	wnd.clear();
+	ClearSoftwareFrame();
 
-	// Draw
+	// First pass: fill solid triangles and populate depth buffer
 	for (const TriangleToRaster& tri : trisToRaster)
 	{
-		sf::Vector2f p0(tri.p[0].x, tri.p[0].y);
-		sf::Vector2f p1(tri.p[1].x, tri.p[1].y);
-		sf::Vector2f p2(tri.p[2].x, tri.p[2].y);
-
-		sf::ConvexShape shape{};
-		shape.setPointCount(3);
-		shape.setPoint(0, p0);
-		shape.setPoint(1, p1);
-		shape.setPoint(2, p2);
-
-		shape.setFillColor(BlueFadeToBlack(tri.lum));
-
-		wnd.draw(shape);
-
-		DrawOuterFaceEdges(wnd, p0, p1, p2, tri.meshTriIndex);
+		RasterizeTriangleDepth(tri);
 	}
 
-	// display the frame
+	// Second pass: draw only silhouette / boundary / hard crease edges
+	RasterizeVisibleMeshOutlineDepth();
+
+	frameTexture.update(framePixels.data());
+
+	sf::Sprite frameSprite(frameTexture);
+
+	wnd.clear();
+	wnd.draw(frameSprite);
 	wnd.display();
+
 }
 
 
@@ -369,8 +459,8 @@ sf::Color BlueFadeToBlack(float lum)
 	std::uint8_t blue = static_cast<std::uint8_t>(255.f * lum);
 
 	return sf::Color(
-		static_cast<std::uint8_t>(0),
-		static_cast<std::uint8_t>(0),
+		blue,
+		blue,
 		blue,
 		static_cast<std::uint8_t>(255)
 	);
@@ -403,15 +493,284 @@ void DrawOuterFaceEdges(
 	// This skips the diagonal shared inside each square face.
 
 	bool firstTriangleOfFace = (meshTriIndex % 2) == 0;
+	DrawEdge(wnd, p0, p1);
+	DrawEdge(wnd, p1, p2);
+	DrawEdge(wnd, p2, p0);
+}
 
-	if (firstTriangleOfFace)
+
+float EdgeFunction(const v3d& a, const v3d& b, float x, float y)
+{
+	return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
+}
+
+void ClearSoftwareFrame()
+{
+	std::fill(depthBuffer.begin(), depthBuffer.end(), std::numeric_limits<float>::infinity());
+
+	for (size_t i = 0; i < framePixels.size(); i += 4)
 	{
-		DrawEdge(wnd, p0, p1);
-		DrawEdge(wnd, p1, p2);
+		framePixels[i + 0] = 0;   // R
+		framePixels[i + 1] = 0;   // G
+		framePixels[i + 2] = 0;   // B
+		framePixels[i + 3] = 255; // A
 	}
-	else
+}
+
+void PutPixelDepth(int x, int y, float z, std::uint8_t r, std::uint8_t g, std::uint8_t b)
+{
+	if (x < 0 || x >= static_cast<int>(SCREEN_W) ||
+		y < 0 || y >= static_cast<int>(SCREEN_H))
 	{
-		DrawEdge(wnd, p1, p2);
-		DrawEdge(wnd, p2, p0);
+		return;
+	}
+
+	size_t pixelIndex = static_cast<size_t>(y) * SCREEN_W + static_cast<size_t>(x);
+
+	// Smaller projected z is closer in your projection setup.
+	if (z < depthBuffer[pixelIndex])
+	{
+		depthBuffer[pixelIndex] = z;
+
+		size_t colorIndex = pixelIndex * 4;
+		framePixels[colorIndex + 0] = r;
+		framePixels[colorIndex + 1] = g;
+		framePixels[colorIndex + 2] = b;
+		framePixels[colorIndex + 3] = 255;
+	}
+}
+
+void RasterizeTriangleDepth(const TriangleToRaster& tri)
+{
+	const v3d& p0 = tri.p[0];
+	const v3d& p1 = tri.p[1];
+	const v3d& p2 = tri.p[2];
+
+	float minXf = std::min({ p0.x, p1.x, p2.x });
+	float maxXf = std::max({ p0.x, p1.x, p2.x });
+	float minYf = std::min({ p0.y, p1.y, p2.y });
+	float maxYf = std::max({ p0.y, p1.y, p2.y });
+
+	int minX = std::max(0, static_cast<int>(std::floor(minXf)));
+	int maxX = std::min(static_cast<int>(SCREEN_W) - 1, static_cast<int>(std::ceil(maxXf)));
+	int minY = std::max(0, static_cast<int>(std::floor(minYf)));
+	int maxY = std::min(static_cast<int>(SCREEN_H) - 1, static_cast<int>(std::ceil(maxYf)));
+
+	float area = EdgeFunction(p0, p1, p2.x, p2.y);
+
+	if (std::fabs(area) < 0.000001f)
+	{
+		return;
+	}
+
+	float lum = std::clamp(tri.lum, 0.f, 1.f);
+	std::uint8_t blue = static_cast<std::uint8_t>(255.f * lum);
+
+	for (int y = minY; y <= maxY; ++y)
+	{
+		for (int x = minX; x <= maxX; ++x)
+		{
+			float px = static_cast<float>(x) + 0.5f;
+			float py = static_cast<float>(y) + 0.5f;
+
+			float w0 = EdgeFunction(p1, p2, px, py) / area;
+			float w1 = EdgeFunction(p2, p0, px, py) / area;
+			float w2 = EdgeFunction(p0, p1, px, py) / area;
+
+			if (w0 >= 0.f && w1 >= 0.f && w2 >= 0.f)
+			{
+				float z =
+					w0 * p0.z +
+					w1 * p1.z +
+					w2 * p2.z;
+
+				PutPixelDepth(x, y, z, blue, blue, blue);
+			}
+		}
+	}
+}
+
+void PutPixelLineIfVisible(int x, int y, float z)
+{
+	if (x < 0 || x >= static_cast<int>(SCREEN_W) ||
+		y < 0 || y >= static_cast<int>(SCREEN_H))
+	{
+		return;
+	}
+
+	size_t pixelIndex = static_cast<size_t>(y) * SCREEN_W + static_cast<size_t>(x);
+
+	// Edges are drawn after triangles.
+	// We allow a small epsilon because the line and triangle rasterizers
+	// will not hit perfectly identical depth values every pixel.
+	constexpr float EDGE_DEPTH_EPSILON = 0.0001f;
+
+	if (z <= depthBuffer[pixelIndex] + EDGE_DEPTH_EPSILON)
+	{
+		size_t colorIndex = pixelIndex * 4;
+
+		framePixels[colorIndex + 0] = 0;
+		framePixels[colorIndex + 1] = 0;
+		framePixels[colorIndex + 2] = 0;
+		framePixels[colorIndex + 3] = 255;
+	}
+}
+
+void RasterizeLineDepth(const v3d& a, const v3d& b)
+{
+	float dx = b.x - a.x;
+	float dy = b.y - a.y;
+	float dz = b.z - a.z;
+
+	float stepsF = std::max(std::fabs(dx), std::fabs(dy));
+
+	if (stepsF < 1.f)
+	{
+		PutPixelLineIfVisible(
+			static_cast<int>(std::round(a.x)),
+			static_cast<int>(std::round(a.y)),
+			a.z
+		);
+		return;
+	}
+
+	int steps = static_cast<int>(stepsF);
+
+	for (int i = 0; i <= steps; ++i)
+	{
+		float t = static_cast<float>(i) / static_cast<float>(steps);
+
+		float x = a.x + dx * t;
+		float y = a.y + dy * t;
+		float z = a.z + dz * t;
+
+		PutPixelLineIfVisible(
+			static_cast<int>(std::round(x)),
+			static_cast<int>(std::round(y)),
+			z
+		);
+	}
+}
+
+void RasterizeTriangleEdgesDepth(const TriangleToRaster& tri)
+{
+	RasterizeLineDepth(tri.p[0], tri.p[1]);
+	RasterizeLineDepth(tri.p[1], tri.p[2]);
+	RasterizeLineDepth(tri.p[2], tri.p[0]);
+}
+
+std::uint64_t MakeEdgeKey(int a, int b)
+{
+	if (a > b)
+	{
+		std::swap(a, b);
+	}
+
+	return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(a)) << 32) |
+		static_cast<std::uint32_t>(b);
+}
+
+void BuildMeshEdges(const mesh& m)
+{
+	meshEdges.clear();
+
+	std::unordered_map<std::uint64_t, size_t> edgeMap;
+
+	for (size_t triIndex = 0; triIndex < m.tris.size(); ++triIndex)
+	{
+		const triangle& tri = m.tris[triIndex];
+
+		for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex)
+		{
+			int i0 = tri.vi[edgeIndex];
+			int i1 = tri.vi[(edgeIndex + 1) % 3];
+
+			std::uint64_t key = MakeEdgeKey(i0, i1);
+
+			auto found = edgeMap.find(key);
+
+			if (found == edgeMap.end())
+			{
+				MeshEdge edge;
+
+				edge.v0 = std::min(i0, i1);
+				edge.v1 = std::max(i0, i1);
+				edge.triA = triIndex;
+				edge.edgeA = edgeIndex;
+
+				meshEdges.push_back(edge);
+
+				edgeMap[key] = meshEdges.size() - 1;
+			}
+			else
+			{
+				MeshEdge& edge = meshEdges[found->second];
+
+				if (edge.triB == INVALID_TRI_INDEX)
+				{
+					edge.triB = triIndex;
+					edge.edgeB = edgeIndex;
+				}
+			}
+		}
+	}
+}
+
+float Dot(const v3d& a, const v3d& b)
+{
+	return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+void RasterizeVisibleMeshOutlineDepth()
+{
+	// Higher value = fewer edges.
+	// 0.98 means only draw edges where faces differ by about 11 degrees or more.
+	// For blocky models, try 0.95 or 0.90 if you want more chunky hard edges.
+	constexpr float CREASE_DOT_THRESHOLD = 0.0f;
+
+	for (const MeshEdge& edge : meshEdges)
+	{
+		bool aVisible =
+			edge.triA != INVALID_TRI_INDEX &&
+			rasterValidByMeshTri[edge.triA];
+
+		bool bVisible =
+			edge.triB != INVALID_TRI_INDEX &&
+			rasterValidByMeshTri[edge.triB];
+
+		if (!aVisible && !bVisible)
+		{
+			continue;
+		}
+
+		bool boundaryEdge = edge.triB == INVALID_TRI_INDEX;
+		bool silhouetteEdge = aVisible != bVisible;
+
+		bool hardCreaseEdge = false;
+
+		if (aVisible && bVisible)
+		{
+			float normalDot = Dot(
+				normalByMeshTri[edge.triA],
+				normalByMeshTri[edge.triB]
+			);
+
+			hardCreaseEdge = normalDot < CREASE_DOT_THRESHOLD;
+		}
+
+		if (!boundaryEdge && !silhouetteEdge && !hardCreaseEdge)
+		{
+			continue;
+		}
+
+		size_t drawTriIndex = aVisible ? edge.triA : edge.triB;
+		int drawEdgeIndex = aVisible ? edge.edgeA : edge.edgeB;
+
+		const TriangleToRaster& tri = rasterByMeshTri[drawTriIndex];
+
+		const v3d& p0 = tri.p[drawEdgeIndex];
+		const v3d& p1 = tri.p[(drawEdgeIndex + 1) % 3];
+
+		RasterizeLineDepth(p0, p1);
 	}
 }
