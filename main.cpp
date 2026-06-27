@@ -270,6 +270,7 @@ int main()
 					}
 				}
 			}
+			// display the frame
 			wnd.display();
 		}
 	}
