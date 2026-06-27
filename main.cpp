@@ -1,6 +1,34 @@
 #include <SFML/Graphics.hpp>
 #include <vector>
+#include <iostream>
+#include <cstdint>
+
+
 using namespace std;
+
+// Define masks and shifts
+constexpr uint16_t FG_MASK = 0x000F; // bits 0-3
+constexpr uint16_t BG_MASK = 0x00F0; // bits 4-7
+constexpr uint8_t  BG_SHIFT = 4;
+
+// Helper macros/functions
+constexpr uint16_t FG_COLOR(uint16_t fg) { return fg & FG_MASK; }
+constexpr uint16_t BG_COLOR(uint16_t bg) { return (bg & FG_MASK) << BG_SHIFT; }
+
+short BG_BLACK = 0, BG_DARK_GREY = 1, BG_GREY = 2;
+short FG_BLACK = 3, FG_DARK_GREY = 4, FG_GREY = 5, FG_WHITE = 6;
+wchar_t PIXEL_QUARTER = L'Q', PIXEL_HALF = L'H', PIXEL_THREEQUARTERS = L'T', PIXEL_SOLID = L'S';
+
+struct CHAR_INFO
+{
+	union {
+		wchar_t UnicodeChar;
+		char  AsciiChar;
+	} Char;
+	uint16_t Attributes;
+};
+
+
 struct v3d
 {
 	float x, y, z;
@@ -9,6 +37,9 @@ struct v3d
 struct triangle
 {
 	v3d p[3];
+
+	wchar_t sym;
+	short col;
 };
 
 struct mesh
@@ -20,6 +51,8 @@ struct m4x4
 {
 	float m[4][4] = { 0 };
 };
+
+
 
 mesh meshCube;
 m4x4 matProj;
@@ -36,7 +69,8 @@ float theta;
 
 bool update(float dt_);
 void MultMatVec(v3d& i, v3d& o, m4x4& m);
-
+CHAR_INFO GetColor(float lum);
+sf::Color ConvertColorInfo(CHAR_INFO c);
 int main()
 {
 
@@ -206,10 +240,25 @@ int main()
 				   normal.y * (triTranslated.p[0].y - camera.y) +
 				   normal.z * (triTranslated.p[0].z - camera.z) < 0.f)
 				{
+					v3d light_direction = { 0.f, 0.f, -1.f };
+					float lightn = sqrtf(light_direction.x * light_direction.x + light_direction.y * light_direction.y + light_direction.z * light_direction.z);
+					light_direction.x /= lightn;
+					light_direction.y /= lightn;
+					light_direction.z /= lightn;
+
+					float dp = normal.x * light_direction.x + normal.y * light_direction.y + normal.z * light_direction.z;
+
+					CHAR_INFO c = GetColor(dp);
+					triTranslated.col = c.Attributes;
+					triTranslated.sym = c.Char.UnicodeChar;
+
 					// project final vertice transform
 					MultMatVec(triTranslated.p[0], triProjected.p[0], matProj);
 					MultMatVec(triTranslated.p[1], triProjected.p[1], matProj);
 					MultMatVec(triTranslated.p[2], triProjected.p[2], matProj);
+					triProjected.col = triTranslated.col;
+					triProjected.sym = triTranslated.sym;
+
 
 					// Scale into screen space
 					triProjected.p[0].x += 1.f;	triProjected.p[0].y += 1.f;
@@ -236,38 +285,38 @@ int main()
 					shape.setPoint(0, point1A);
 					shape.setPoint(1, point2A);
 					shape.setPoint(2, point3A);
-					shape.setFillColor(sf::Color::Blue);
+					shape.setFillColor(ConvertColorInfo(c));
 
 					// draw the shape
 					wnd.draw(shape);
 				
 					// draw the shape outline
-					if (even)
-					{
-						// Create a VertexArray with 2 vertices
-						outline[0][0].position = point1A;
-						outline[0][0].color = sf::Color::White;
-						outline[0][1].position = point1B;
-						outline[0][1].color = sf::Color::White;
-						wnd.draw(outline[0]);
-					}
+					//if (even)
+					//{
+					//	// Create a VertexArray with 2 vertices
+					//	outline[0][0].position = point1A;
+					//	outline[0][0].color = sf::Color::White;
+					//	outline[0][1].position = point1B;
+					//	outline[0][1].color = sf::Color::White;
+					//	wnd.draw(outline[0]);
+					//}
 
-					outline[1][0].position = point2A;
-					outline[1][0].color = sf::Color::White;
-					outline[1][1].position = point2B;
-					outline[1][1].color = sf::Color::White;
+					//outline[1][0].position = point2A;
+					//outline[1][0].color = sf::Color::White;
+					//outline[1][1].position = point2B;
+					//outline[1][1].color = sf::Color::White;
 
-					wnd.draw(outline[1]);
+					//wnd.draw(outline[1]);
 
-					if (!even)
-					{
-						outline[2][0].position = point3A;
-						outline[2][0].color = sf::Color::White;
-						outline[2][1].position = point3B;
-						outline[2][1].color = sf::Color::White;
-						wnd.draw(outline[2]);
+					//if (!even)
+					//{
+					//	outline[2][0].position = point3A;
+					//	outline[2][0].color = sf::Color::White;
+					//	outline[2][1].position = point3B;
+					//	outline[2][1].color = sf::Color::White;
+					//	wnd.draw(outline[2]);
 
-					}
+					//}
 				}
 			}
 			// display the frame
@@ -294,5 +343,65 @@ void MultMatVec(v3d& i, v3d& o, m4x4& m)
 	if (w != 0.f)
 	{
 		o.x /= w; o.y /= w; o.z /= w;
+	}
+}
+
+CHAR_INFO GetColor(float lum)
+{
+	short bg_col, fg_col;
+	wchar_t sym;
+	int pixel_bw = (int)(13.f * lum);
+	switch (pixel_bw)
+	{
+	case 0: bg_col = BG_BLACK; fg_col = FG_BLACK; sym = PIXEL_SOLID;  break;
+
+	case 1: bg_col = BG_BLACK; fg_col = FG_DARK_GREY; sym = PIXEL_QUARTER;  break;
+	case 2: bg_col = BG_BLACK; fg_col = FG_DARK_GREY; sym = PIXEL_HALF;  break;
+	case 3: bg_col = BG_BLACK; fg_col = FG_DARK_GREY; sym = PIXEL_THREEQUARTERS;  break;
+	case 4: bg_col = BG_BLACK; fg_col = FG_DARK_GREY; sym = PIXEL_SOLID;  break;
+	
+	case 5: bg_col = BG_DARK_GREY; fg_col = FG_GREY; sym = PIXEL_QUARTER;  break;
+	case 6: bg_col = BG_DARK_GREY; fg_col = FG_GREY; sym = PIXEL_HALF;  break;
+	case 7: bg_col = BG_DARK_GREY; fg_col = FG_GREY; sym = PIXEL_THREEQUARTERS;  break;
+	case 8: bg_col = BG_DARK_GREY; fg_col = FG_GREY; sym = PIXEL_SOLID;  break;
+	
+	case 9: bg_col = BG_GREY; fg_col = FG_WHITE; sym = PIXEL_QUARTER;  break;
+	case 10: bg_col = BG_GREY; fg_col = FG_WHITE; sym = PIXEL_HALF;  break;
+	case 11: bg_col = BG_GREY; fg_col = FG_WHITE; sym = PIXEL_THREEQUARTERS;  break;
+	case 12: bg_col = BG_GREY; fg_col = FG_WHITE; sym = PIXEL_SOLID;  break;
+	default:
+		bg_col = BG_BLACK; fg_col = FG_BLACK; sym = PIXEL_SOLID;
+	}
+
+	CHAR_INFO c;
+	c.Attributes = BG_COLOR(bg_col) | FG_COLOR(fg_col);
+	c.Char.UnicodeChar = sym;
+	return c;
+}
+
+sf::Color ConvertColorInfo(CHAR_INFO c)
+{
+	uint16_t fg = c.Attributes & FG_MASK;
+	uint16_t bg = (c.Attributes & BG_MASK) >> BG_SHIFT;
+
+	if (fg == FG_BLACK)
+	{
+		return sf::Color::Black;
+	}
+	else if (fg == FG_DARK_GREY)
+	{
+		return sf::Color(20ui8, 20ui8, 20ui8, 255ui8);
+	}
+	else if (fg == FG_GREY)
+	{
+		return sf::Color(127ui8, 127ui8, 127ui8, 255ui8);
+	}
+	else if (fg == FG_WHITE)
+	{
+		return sf::Color::White;
+	}
+	else
+	{
+		return sf::Color::Transparent;
 	}
 }
