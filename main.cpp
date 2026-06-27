@@ -71,6 +71,7 @@ bool update(float dt_);
 void MultMatVec(v3d& i, v3d& o, m4x4& m);
 CHAR_INFO GetColor(float lum);
 sf::Color ConvertColorInfo(CHAR_INFO c);
+float GetLightMultiplier(wchar_t sym);
 int main()
 {
 
@@ -285,7 +286,14 @@ int main()
 					shape.setPoint(0, point1A);
 					shape.setPoint(1, point2A);
 					shape.setPoint(2, point3A);
-					shape.setFillColor(ConvertColorInfo(c));
+				
+					auto col = ConvertColorInfo(c);
+					float multiplier = GetLightMultiplier(triProjected.sym);
+					col.r = (uint8_t)((float)col.r * multiplier);
+					col.g = (uint8_t)((float)col.g * multiplier);
+					col.b = (uint8_t)((float)col.b * multiplier);
+
+					shape.setFillColor(col);
 
 					// draw the shape
 					wnd.draw(shape);
@@ -390,18 +398,42 @@ sf::Color ConvertColorInfo(CHAR_INFO c)
 	}
 	else if (fg == FG_DARK_GREY)
 	{
-		return sf::Color(20ui8, 20ui8, 20ui8, 255ui8);
+		return sf::Color(0ui8, 0ui8, 20ui8, 255ui8);
 	}
 	else if (fg == FG_GREY)
 	{
-		return sf::Color(127ui8, 127ui8, 127ui8, 255ui8);
+		return sf::Color(0ui8, 0ui8, 127ui8, 255ui8);
 	}
 	else if (fg == FG_WHITE)
 	{
-		return sf::Color::White;
+		return sf::Color::Blue;
 	}
 	else
 	{
 		return sf::Color::Transparent;
+	}
+}
+
+float GetLightMultiplier(wchar_t sym)
+{
+	if (sym == PIXEL_SOLID)
+	{
+		return 1.f;
+	}
+	else if (sym == PIXEL_QUARTER)
+	{
+		return 0.25f;
+	}
+	else if (sym == PIXEL_HALF)
+	{
+		return 0.5f;
+	}
+	else if (sym == PIXEL_THREEQUARTERS)
+	{
+		return 0.75f;
+	}
+	else
+	{
+		return 0.f;
 	}
 }
