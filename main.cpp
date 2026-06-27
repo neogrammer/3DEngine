@@ -24,6 +24,8 @@ struct m4x4
 mesh meshCube;
 m4x4 matProj;
 
+v3d camera;
+
 float width, height;
 float aspect;
 float fov;
@@ -59,6 +61,10 @@ int main()
 		// Top
 		{0.f,1.f,0.f,  0.f,1.f,1.f,  1.f,1.f,1.f},
 		{0.f,1.f,0.f,  1.f,1.f,1.f,  1.f,1.f,0.f},
+
+		// Bottom
+		{0.f,0.f,1.f,  0.f,0.f,0.f,  1.f,0.f,0.f},
+		{0.f,0.f,1.f,  1.f,0.f,0.f,  1.f,0.f,1.f},
 	};
 	width = 1600.f;
 	height = 900.f;
@@ -130,7 +136,7 @@ int main()
 
 			m4x4 matRotZ, matRotX;
 			
-
+			// Z Rotation Matrix
 			matRotZ.m[0][0] = cosf(theta);
 			matRotZ.m[0][1] = sinf(theta);
 			matRotZ.m[1][0] = -sinf(theta);
@@ -138,6 +144,7 @@ int main()
 			matRotZ.m[2][2] = 1.f;
 			matRotZ.m[3][3] = 1.f;
 
+			// X Rotation Matrix
 			matRotX.m[0][0] = 1.f;
 			matRotX.m[1][1] = cosf(theta * 0.5f);
 			matRotX.m[1][2] = sinf(theta * 0.5f);
@@ -145,71 +152,124 @@ int main()
 			matRotX.m[2][2] = cosf(theta * 0.5f);
 			matRotX.m[3][3] = 1.f;
 
-
+			// for each tiangle to be rendered in the model
 			for (auto tri : meshCube.tris)
 			{
+				// decides outer lines for cube outline
+				static bool even{ false };
+				even = !even;
+
+				// transforms
 				triangle triProjected, triTranslated, triRotatedZ, triRotatedZX;
 
+
+				// Rotate Z
 				MultMatVec(tri.p[0], triRotatedZ.p[0], matRotZ);
 				MultMatVec(tri.p[1], triRotatedZ.p[1], matRotZ);
 				MultMatVec(tri.p[2], triRotatedZ.p[2], matRotZ);
 
+
+				// Rotate X
 				MultMatVec(triRotatedZ.p[0], triRotatedZX.p[0], matRotX);
 				MultMatVec(triRotatedZ.p[1], triRotatedZX.p[1], matRotX);
 				MultMatVec(triRotatedZ.p[2], triRotatedZX.p[2], matRotX);
 
+				// translate
 				triTranslated = triRotatedZX;
 				triTranslated.p[0].z = triRotatedZX.p[0].z + 3.f;
 				triTranslated.p[1].z = triRotatedZX.p[1].z + 3.f;
 				triTranslated.p[2].z = triRotatedZX.p[2].z + 3.f;
 
-				MultMatVec(triTranslated.p[0], triProjected.p[0], matProj);
-				MultMatVec(triTranslated.p[1], triProjected.p[1], matProj);
-				MultMatVec(triTranslated.p[2], triProjected.p[2], matProj);
+				// setup for dot product between camera and normal
+				v3d normal, line1, line2;
+				line1.x = triTranslated.p[1].x - triTranslated.p[0].x;
+				line1.y = triTranslated.p[1].y - triTranslated.p[0].y;
+				line1.z = triTranslated.p[1].z - triTranslated.p[0].z;
 
-				triProjected.p[0].x += 1.f;
-				triProjected.p[0].y += 1.f;
-				triProjected.p[1].x += 1.f;
-				triProjected.p[1].y += 1.f;
-				triProjected.p[2].x += 1.f;
-				triProjected.p[2].y += 1.f;
+				line2.x = triTranslated.p[2].x - triTranslated.p[0].x;
+				line2.y = triTranslated.p[2].y - triTranslated.p[0].y;
+				line2.z = triTranslated.p[2].z - triTranslated.p[0].z;
 
-				triProjected.p[0].x *= 0.5f * width;
-				triProjected.p[0].y *= 0.5f * height;
-				triProjected.p[1].x *= 0.5f * width;
-				triProjected.p[1].y *= 0.5f * height;
-				triProjected.p[2].x *= 0.5f * width;
-				triProjected.p[2].y *= 0.5f * height;
+				normal.x = line1.y * line2.z - line1.z * line2.y;
+				normal.y = line1.z * line2.x - line1.x * line2.z;
+				normal.z = line1.x * line2.y - line1.y * line2.x;
 
-				// Define two points
-				sf::Vector2f point1A(triProjected.p[0].x, triProjected.p[0].y);
-				sf::Vector2f point1B(triProjected.p[1].x, triProjected.p[1].y);
-				sf::Vector2f point2A(triProjected.p[1].x, triProjected.p[1].y);
-				sf::Vector2f point2B(triProjected.p[2].x, triProjected.p[2].y);
-				sf::Vector2f point3A(triProjected.p[2].x, triProjected.p[2].y);
-				sf::Vector2f point3B(triProjected.p[0].x, triProjected.p[0].y);
+				float l = sqrtf(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+				normal.x /= l;
+				normal.y /= l;
+				normal.z /= l;
 
-				// Create a VertexArray with 2 vertices
-				outline[0][0].position = point1A;
-				outline[0][0].color = sf::Color::White;
-				outline[0][1].position = point1B;
-				outline[0][1].color = sf::Color::White;
 
-				outline[1][0].position = point2A;
-				outline[1][0].color = sf::Color::White;
-				outline[1][1].position = point2B;
-				outline[1][1].color = sf::Color::White;
+			   
+				//  If we can see the normal
+				if(normal.x * (triTranslated.p[0].x - camera.x) +
+				   normal.y * (triTranslated.p[0].y - camera.y) +
+				   normal.z * (triTranslated.p[0].z - camera.z) < 0.f)
+				{
+					// project final vertice transform
+					MultMatVec(triTranslated.p[0], triProjected.p[0], matProj);
+					MultMatVec(triTranslated.p[1], triProjected.p[1], matProj);
+					MultMatVec(triTranslated.p[2], triProjected.p[2], matProj);
 
-				outline[2][0].position = point3A;
-				outline[2][0].color = sf::Color::White;
-				outline[2][1].position = point3B;
-				outline[2][1].color = sf::Color::White;
+					// Scale into screen space
+					triProjected.p[0].x += 1.f;	triProjected.p[0].y += 1.f;
+					triProjected.p[1].x += 1.f;	triProjected.p[1].y += 1.f;
+					triProjected.p[2].x += 1.f;	triProjected.p[2].y += 1.f;
+					triProjected.p[0].x *= 0.5f * (float)width;
+					triProjected.p[0].y *= 0.5f * (float)height;
+					triProjected.p[1].x *= 0.5f * (float)width;
+					triProjected.p[1].y *= 0.5f * (float)height;
+					triProjected.p[2].x *= 0.5f * (float)width;
+					triProjected.p[2].y *= 0.5f * (float)height;
 
-				wnd.draw(outline[0]);
-				wnd.draw(outline[1]);
-				wnd.draw(outline[2]);
+					// Define three points, on three lines for the triangle being rendered
+					sf::Vector2f point1A(triProjected.p[0].x, triProjected.p[0].y);
+					sf::Vector2f point1B(triProjected.p[1].x, triProjected.p[1].y);
+					sf::Vector2f point2A(triProjected.p[1].x, triProjected.p[1].y);
+					sf::Vector2f point2B(triProjected.p[2].x, triProjected.p[2].y);
+					sf::Vector2f point3A(triProjected.p[2].x, triProjected.p[2].y);
+					sf::Vector2f point3B(triProjected.p[0].x, triProjected.p[0].y);
+
+					// colored model
+					sf::ConvexShape shape{};
+					shape.setPointCount(3);
+					shape.setPoint(0, point1A);
+					shape.setPoint(1, point2A);
+					shape.setPoint(2, point3A);
+					shape.setFillColor(sf::Color::Blue);
+
+					// draw the shape
+					wnd.draw(shape);
+				
+					// draw the shape outline
+					if (even)
+					{
+						// Create a VertexArray with 2 vertices
+						outline[0][0].position = point1A;
+						outline[0][0].color = sf::Color::White;
+						outline[0][1].position = point1B;
+						outline[0][1].color = sf::Color::White;
+						wnd.draw(outline[0]);
+					}
+
+					outline[1][0].position = point2A;
+					outline[1][0].color = sf::Color::White;
+					outline[1][1].position = point2B;
+					outline[1][1].color = sf::Color::White;
+
+					wnd.draw(outline[1]);
+
+					if (!even)
+					{
+						outline[2][0].position = point3A;
+						outline[2][0].color = sf::Color::White;
+						outline[2][1].position = point3B;
+						outline[2][1].color = sf::Color::White;
+						wnd.draw(outline[2]);
+
+					}
+				}
 			}
-
 			wnd.display();
 		}
 	}
