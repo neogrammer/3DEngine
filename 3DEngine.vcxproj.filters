@@ -23,5 +23,17 @@
     <Object Include="assets\models\spaceship\spaceship.obj">
       <Filter>Resource Files</Filter>
     </Object>
+    <Object Include="assets\models\axis.obj">
+      <Filter>Resource Files</Filter>
+    </Object>
+    <Object Include="assets\models\mountains.obj">
+      <Filter>Resource Files</Filter>
+    </Object>
+    <Object Include="assets\models\teapot.obj">
+      <Filter>Resource Files</Filter>
+    </Object>
+    <Object Include="assets\models\VideoShip.obj">
+      <Filter>Resource Files</Filter>
+    </Object>
   </ItemGroup>
 </Project>
