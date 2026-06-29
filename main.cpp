@@ -372,16 +372,30 @@ bool update(float dt_)
 		camera.y += 8.0f * dt_;
 	}
 
-	if (GetAsyncKeyState(VK_LEFT))
+	// Rebuild camera direction before movement
+	v3d up = { 0, 1, 0 };
+	v3d targetForward = { 0, 0, 1 };
+
+	m4x4 matCameraRot = ::Matrix_MakeRotationY(camYaw);
+	lookDir = ::Matrix_MultVector(matCameraRot, targetForward);
+	lookDir = ::Vector_Normalize(lookDir);
+
+	// Camera-local right vector
+	v3d rightDir = ::Vector_CrossProduct(up, lookDir);
+	rightDir = ::Vector_Normalize(rightDir);
+	v3d mvForward = ::Vector_Mul(lookDir, 8.0f * dt_);
+	v3d mvRight = ::Vector_Mul(rightDir,  8.0f * dt_);
+
+	// Strafe left/right relative to camera view
+	if (GetAsyncKeyState(VK_LEFT) & 0x8000)
 	{
-		camera.x -= 8.0f * dt_;
-	}
-	if (GetAsyncKeyState(VK_RIGHT))
-	{
-		camera.x += 8.0f * dt_;
+		camera = ::Vector_Sub(camera, mvRight);
 	}
 
-	v3d mvForward = ::Vector_Mul(lookDir, 8.0f * dt_);
+	if (GetAsyncKeyState(VK_RIGHT) & 0x8000)
+	{
+		camera = ::Vector_Add(camera, mvRight);
+	}
 
 	if (GetAsyncKeyState('W') & 0x8000)
 	{
@@ -416,9 +430,9 @@ bool update(float dt_)
 	matWorld = ::Matrix_MultiplyMatrix(matWorld, matRotY);
 	matWorld = ::Matrix_MultiplyMatrix(matWorld, matTrans);
 
-	v3d up = { 0, 1, 0 };
+
 	v3d target = { 0,0,1 }; // Vector_Add(camera, lookDir)
-	m4x4 matCameraRot = ::Matrix_MakeRotationY(camYaw);
+    matCameraRot = ::Matrix_MakeRotationY(camYaw);
 	lookDir = ::Matrix_MultVector(matCameraRot, target);
 	target = ::Vector_Add(camera, lookDir);
 
