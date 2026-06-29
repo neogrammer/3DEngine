@@ -35,5 +35,8 @@
     <Object Include="assets\models\VideoShip.obj">
       <Filter>Resource Files</Filter>
     </Object>
+    <Object Include="assets\models\axis_fixed.obj">
+      <Filter>Resource Files</Filter>
+    </Object>
   </ItemGroup>
 </Project>

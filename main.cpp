@@ -13,12 +13,12 @@
 
 #define VC_EXTRALEAN
 #include <Windows.h>
-
+#include <deque>
 using namespace std;
 
 float toRadians(float degree)
 {
-	return {(degree * 180.f ) / 3.14159f};
+	return degree * 3.14159f / 180.f;
 }
 
 constexpr size_t INVALID_TRI_INDEX = std::numeric_limits<size_t>::max();
@@ -62,6 +62,8 @@ struct v3d
 	{
 		return *this / length();
 	}
+
+
 
 	float lawofcosines_cuz_chatGPT_is_a_pain_in_my_ass(const v3d& b) const
 	{
@@ -237,6 +239,9 @@ struct m4x4
 
 m4x4 matProj;
 v3d camera;
+v3d lookDir;
+
+float camYaw;
 
 struct TriangleToRaster
 {
@@ -301,11 +306,16 @@ m4x4 Matrix_MakeRotationZ(float angleRad);
 m4x4 Matrix_MakeTranslation(float x, float y, float z);
 m4x4 Matrix_MakeProjection(float fovDegrees, float aspectRatio, float zNear, float zFar);
 m4x4 Matrix_MultiplyMatrix(const m4x4& m1, const m4x4& m2);
+m4x4 Matrix_PointAt(const v3d& pos, const v3d& target, const v3d& up);
+m4x4 Matrix_QuickInverse(const m4x4& m);
+v3d Vector_IntersectPlane(const v3d& plane_p, const v3d& plane_n, const v3d& lineStart, const v3d& lineEnd);
+int Triangle_ClipAgainstPlane(const v3d& plane_p, v3d plane_n, const triangle& in_tri, triangle& out_tri1,  triangle& out_tri2);
+int ClipRasterTriangleAgainstPlane(const v3d& plane_p,	v3d plane_n,	const TriangleToRaster& in_tri,	TriangleToRaster& out_tri1,	TriangleToRaster& out_tri2);
 }
 
 int main()
 {
-	meshCube.LoadObjectFile("assets/models/axis.obj");
+	meshCube.LoadObjectFile("assets/models/axis_fixed.obj");
 	::BuildMeshEdges(meshCube);
 
 	matProj = ::Matrix_MakeProjection(90.f, height / width, 0.1f, 1000.f);
@@ -353,18 +363,68 @@ int main()
 
 bool update(float dt_)
 {
-	m4x4 matRotZ, matRotX;
+	if (GetAsyncKeyState(VK_UP))
+	{
+		camera.y -= 8.0f * dt_;
+	}
+	if (GetAsyncKeyState(VK_DOWN))
+	{
+		camera.y += 8.0f * dt_;
+	}
+
+	if (GetAsyncKeyState(VK_LEFT))
+	{
+		camera.x -= 8.0f * dt_;
+	}
+	if (GetAsyncKeyState(VK_RIGHT))
+	{
+		camera.x += 8.0f * dt_;
+	}
+
+	v3d mvForward = ::Vector_Mul(lookDir, 8.0f * dt_);
+
+	if (GetAsyncKeyState('W') & 0x8000)
+	{
+		camera = ::Vector_Add(camera, mvForward);
+	}
+	if (GetAsyncKeyState('A') & 0x8000)
+	{
+		camYaw += 2.f * dt_;
+	}
+
+	if (GetAsyncKeyState('S') & 0x8000)
+	{
+		camera = ::Vector_Sub(camera, mvForward);
+	}
+	if (GetAsyncKeyState('D') & 0x8000)
+	{
+		camYaw -= 2.f * dt_;
+	}
+
+
+	m4x4 matRotZ, matRotX, matRotY;
 	theta = 90.f;
-	matRotZ = ::Matrix_MakeRotationY(toRadians(1.1f));
-	matRotX = ::Matrix_MakeRotationX(toRadians(30.f));
+	matRotZ = ::Matrix_MakeRotationZ(toRadians(0.f));
+	matRotY = ::Matrix_MakeRotationY(toRadians(0.f));
+
+	matRotX = ::Matrix_MakeRotationX(toRadians(-90.f));
 	m4x4 matTrans;
-	matTrans = ::Matrix_MakeTranslation(0.f, 0.f, 19.5f);
+	matTrans = ::Matrix_MakeTranslation(4.f, 3.f, 19.5f);
 	m4x4 matWorld;
 	matWorld = ::Matrix_MakeIdentity();
-	//matWorld = ::Matrix_MultiplyMatrix(matWorld, matRotZ);
 	matWorld = ::Matrix_MultiplyMatrix(matRotZ, matRotX);
-
+	matWorld = ::Matrix_MultiplyMatrix(matWorld, matRotY);
 	matWorld = ::Matrix_MultiplyMatrix(matWorld, matTrans);
+
+	v3d up = { 0, 1, 0 };
+	v3d target = { 0,0,1 }; // Vector_Add(camera, lookDir)
+	m4x4 matCameraRot = ::Matrix_MakeRotationY(camYaw);
+	lookDir = ::Matrix_MultVector(matCameraRot, target);
+	target = ::Vector_Add(camera, lookDir);
+
+	m4x4 matCamera = ::Matrix_PointAt(camera, target, up);
+	m4x4 matView = ::Matrix_QuickInverse(matCamera);
+
 
 	trisToRaster.clear();
 	rasterByMeshTri.clear();
@@ -379,7 +439,7 @@ bool update(float dt_)
 	{
 		triangle& tri = meshCube.tris[triIndex];
 
-		triangle triProjected, triTransformed;
+		triangle triProjected, triTransformed, triViewed;
 
 		triTransformed.p[0] = ::Matrix_MultVector(matWorld, tri.p[0]);
 		triTransformed.p[1] = ::Matrix_MultVector(matWorld, tri.p[1]);
@@ -403,55 +463,164 @@ bool update(float dt_)
 			float dp = max<float>(0.1f, ::Vector_DotProduct(light_direction, normal));
 			dp = std::clamp(dp, 0.f, 1.f);
 
-			// Project
-			triProjected.p[0] =::Matrix_MultVector(matProj, triTransformed.p[0]);
-			triProjected.p[1] =::Matrix_MultVector(matProj, triTransformed.p[1]);
-			triProjected.p[2] =::Matrix_MultVector(matProj, triTransformed.p[2]);
-			triProjected.p[0] =::Vector_Div(triProjected.p[0], triProjected.p[0].w);
-			triProjected.p[1] =::Vector_Div(triProjected.p[1], triProjected.p[1].w);
-			triProjected.p[2] =::Vector_Div(triProjected.p[2], triProjected.p[2].w);
+			// Convert World Space --> View Space
+			triViewed.p[0] = Matrix_MultVector(matView, triTransformed.p[0]);
+			triViewed.p[1] = Matrix_MultVector(matView, triTransformed.p[1]);
+			triViewed.p[2] = Matrix_MultVector(matView, triTransformed.p[2]);
+			
+			// CLip viewed triangle near plane, this could form two additional triangles
+			int clippedTriangles = 0;
+			triangle clipped[2];
+			clippedTriangles = ::Triangle_ClipAgainstPlane({ 0.f, 0.f, 0.1f }, { 0.f,0.f,1.f }, triViewed, clipped[0], clipped[1]);
+		
+			for (int n = 0; n < clippedTriangles; n++)
+			{
 
-			// Scale into screen space
-			v3d offsetView = { 1, 1, 0 };
-			triProjected.p[0] = ::Vector_Add(triProjected.p[0], offsetView);
-			triProjected.p[1] = ::Vector_Add(triProjected.p[1], offsetView);
-			triProjected.p[2] = ::Vector_Add(triProjected.p[2], offsetView);
-			triProjected.p[0].x *= 0.5f * width;
-			triProjected.p[0].y *= 0.5f * height;
-			triProjected.p[1].x *= 0.5f * width;
-			triProjected.p[1].y *= 0.5f * height;
-			triProjected.p[2].x *= 0.5f * width;
-			triProjected.p[2].y *= 0.5f * height;
 
-			// used for pixel perfect depth and lighting without GPU
-			TriangleToRaster rasterTri;
-			rasterTri.p[0] = triProjected.p[0];
-			rasterTri.p[1] = triProjected.p[1];
-			rasterTri.p[2] = triProjected.p[2];
-			rasterTri.lum = dp;
-			rasterTri.meshTriIndex = triIndex;
-			rasterByMeshTri[triIndex] = rasterTri;
-			rasterValidByMeshTri[triIndex] = true;
-			trisToRaster.push_back(rasterTri);
+				// Project
+				triProjected.p[0] = ::Matrix_MultVector(matProj, clipped[n].p[0]);
+				triProjected.p[1] = ::Matrix_MultVector(matProj, clipped[n].p[1]);
+				triProjected.p[2] = ::Matrix_MultVector(matProj, clipped[n].p[2]);
+				triProjected.p[0] = ::Vector_Div(triProjected.p[0], triProjected.p[0].w);
+				triProjected.p[1] = ::Vector_Div(triProjected.p[1], triProjected.p[1].w);
+				triProjected.p[2] = ::Vector_Div(triProjected.p[2], triProjected.p[2].w);
+
+				//// X/Y are inverted now so put them back
+				//triProjected.p[0].x *= -1.f;
+				//triProjected.p[1].x *= -1.f;
+				//triProjected.p[2].x *= -1.f;
+				//triProjected.p[0].y *= -1.f;
+				//triProjected.p[1].y *= -1.f;
+				//triProjected.p[2].y *= -1.f;
+
+				// offset view into visible normalized space
+				v3d offsetView = { 1, 1, 0 };
+				triProjected.p[0] = ::Vector_Add(triProjected.p[0], offsetView);
+				triProjected.p[1] = ::Vector_Add(triProjected.p[1], offsetView);
+				triProjected.p[2] = ::Vector_Add(triProjected.p[2], offsetView);
+				// Scale into screen space
+				triProjected.p[0].x *= 0.5f * width;
+				triProjected.p[0].y *= 0.5f * height;
+				triProjected.p[1].x *= 0.5f * width;
+				triProjected.p[1].y *= 0.5f * height;
+				triProjected.p[2].x *= 0.5f * width;
+				triProjected.p[2].y *= 0.5f * height;
+
+				// used for pixel perfect depth and lighting without GPU
+				TriangleToRaster rasterTri;
+				rasterTri.p[0] = triProjected.p[0];
+				rasterTri.p[1] = triProjected.p[1];
+				rasterTri.p[2] = triProjected.p[2];
+				rasterTri.lum = dp;
+				rasterTri.meshTriIndex = triIndex;
+				rasterByMeshTri[triIndex] = rasterTri;
+				rasterValidByMeshTri[triIndex] = true;
+				trisToRaster.push_back(rasterTri);
+
+			}
 		}
 	}
+
+
+
 	return true;
 }
 
 void render(sf::RenderWindow& wnd)
 {
 	::ClearSoftwareFrame();
-	// First pass: fill solid triangles and populate depth buffer
-	for (const TriangleToRaster& tri : trisToRaster)
+
+	std::vector<TriangleToRaster> clippedToRaster;
+	clippedToRaster.reserve(trisToRaster.size());
+
+	for (const TriangleToRaster& srcTri : trisToRaster)
+	{
+		std::deque<TriangleToRaster> listTriangles;
+		listTriangles.push_back(srcTri);
+
+		for (int p = 0; p < 4; ++p)
+		{
+			int trianglesToProcess = static_cast<int>(listTriangles.size());
+
+			while (trianglesToProcess > 0)
+			{
+				TriangleToRaster test = listTriangles.front();
+				listTriangles.pop_front();
+				trianglesToProcess--;
+
+				TriangleToRaster clipped[2];
+				int trisToAdd = 0;
+
+				switch (p)
+				{
+				case 0:
+					// Top plane: y >= 0
+					trisToAdd = ::ClipRasterTriangleAgainstPlane(
+						{ 0.f, 0.f, 0.f },
+						{ 0.f, 1.f, 0.f },
+						test,
+						clipped[0],
+						clipped[1]
+					);
+					break;
+
+				case 1:
+					// Bottom plane: y <= height - 1
+					trisToAdd = ::ClipRasterTriangleAgainstPlane(
+						{ 0.f, height - 1.f, 0.f },
+						{ 0.f, -1.f, 0.f },
+						test,
+						clipped[0],
+						clipped[1]
+					);
+					break;
+
+				case 2:
+					// Left plane: x >= 0
+					trisToAdd = ::ClipRasterTriangleAgainstPlane(
+						{ 0.f, 0.f, 0.f },
+						{ 1.f, 0.f, 0.f },
+						test,
+						clipped[0],
+						clipped[1]
+					);
+					break;
+
+				case 3:
+					// Right plane: x <= width - 1
+					trisToAdd = ::ClipRasterTriangleAgainstPlane(
+						{ width - 1.f, 0.f, 0.f },
+						{ -1.f, 0.f, 0.f },
+						test,
+						clipped[0],
+						clipped[1]
+					);
+					break;
+				}
+
+				for (int i = 0; i < trisToAdd; ++i)
+				{
+					listTriangles.push_back(clipped[i]);
+				}
+			}
+		}
+
+		for (const TriangleToRaster& clippedTri : listTriangles)
+		{
+			clippedToRaster.push_back(clippedTri);
+		}
+	}
+
+	for (const TriangleToRaster& tri : clippedToRaster)
 	{
 		::RasterizeTriangleDepth(tri);
 	}
-	// Second pass: draw only silhouette / boundary / hard crease edges
+
 	::RasterizeVisibleMeshOutlineDepth();
+
 	frameTexture.update(framePixels.data());
 	sf::Sprite frameSprite(frameTexture);
 
-	// all one draw call
 	wnd.clear();
 	wnd.draw(frameSprite);
 	wnd.display();
@@ -491,8 +660,8 @@ namespace {
 		m4x4 matrix;
 		matrix.m[0][0] = 1.f;
 		matrix.m[1][1] = cosf(angleRad);
-		matrix.m[1][2] = sinf(angleRad);
-		matrix.m[2][1] = -sinf(angleRad);
+		matrix.m[1][2] = -sinf(angleRad);
+		matrix.m[2][1] = sinf(angleRad);
 		matrix.m[2][2] = cosf(angleRad);
 		matrix.m[3][3] = 1.f;
 		return matrix;
@@ -514,8 +683,8 @@ namespace {
 	{
 		m4x4 matrix;
 		matrix.m[0][0] = cosf(angleRad);
-		matrix.m[0][1] = sinf(angleRad);
-		matrix.m[1][0] = -sinf(angleRad);
+		matrix.m[0][1] = -sinf(angleRad);
+		matrix.m[1][0] = sinf(angleRad);
 		matrix.m[1][1] = cosf(angleRad);
 		matrix.m[2][2] = 1.f;
 		matrix.m[3][3] = 1.f;
@@ -559,6 +728,200 @@ namespace {
 			}
 		}
 		return matrix;
+	}
+
+	m4x4 Matrix_PointAt(const v3d& pos, const v3d& target, const v3d& up)
+	{
+		// Calculate the new forward direction
+		v3d newForward = ::Vector_Sub(target, pos);
+		newForward = ::Vector_Normalize(newForward);
+
+		// Calculate new Up direction
+		v3d a = ::Vector_Mul(newForward, ::Vector_DotProduct(up, newForward));
+		v3d newUp = ::Vector_Sub(up, a);
+		newUp = ::Vector_Normalize(newUp);
+
+		// New Right is easy, cross product
+		v3d newRight = ::Vector_CrossProduct(newUp, newForward);
+
+		// Construct Dimensioning and Translation Matrix
+		m4x4 matrix;
+		matrix.m[0][0] = newRight.x;		matrix.m[0][1] = newRight.y;		matrix.m[0][2] = newRight.z;
+		matrix.m[1][0] = newUp.x;		matrix.m[1][1] = newUp.y;		matrix.m[1][2] = newUp.z;
+		matrix.m[2][0] = newForward.x;		matrix.m[2][1] = newForward.y;		matrix.m[2][2] = newForward.z;
+		matrix.m[3][0] = pos.x;		matrix.m[3][1] = pos.y;		matrix.m[3][2] = pos.z;
+
+		return matrix;
+	}
+
+	m4x4 Matrix_QuickInverse(const m4x4& m)
+	{
+	// Construct Dimensioning and Translation Matrix
+	m4x4 matrix;
+	matrix.m[0][0] = m.m[0][0]; matrix.m[0][1] = m.m[1][0]; matrix.m[0][2] = m.m[2][0];
+	matrix.m[1][0] = m.m[0][1]; matrix.m[1][1] = m.m[1][1]; matrix.m[1][2] = m.m[2][1];
+	matrix.m[2][0] = m.m[0][2]; matrix.m[2][1] = m.m[1][2]; matrix.m[2][2] = m.m[2][2];
+	matrix.m[3][0] = -(m.m[3][0] * matrix.m[0][0] + m.m[3][1] * matrix.m[1][0] + m.m[3][2] * matrix.m[2][0]);
+	matrix.m[3][1] = -(m.m[3][0] * matrix.m[0][1] + m.m[3][1] * matrix.m[1][1] + m.m[3][2] * matrix.m[2][1]);
+	matrix.m[3][2] = -(m.m[3][0] * matrix.m[0][2] + m.m[3][1] * matrix.m[1][2] + m.m[3][2] * matrix.m[2][2]);
+	matrix.m[3][3] = 1.0f;
+	return matrix;
+	}
+
+	v3d Vector_IntersectPlane(const v3d& plane_p, v3d& plane_n, const v3d& lineStart, const v3d& lineEnd)
+	{
+		plane_n = ::Vector_Normalize(plane_n);
+		float plane_d = -::Vector_DotProduct(plane_n, plane_p);
+		float ad = ::Vector_DotProduct(lineStart, plane_n);
+		float bd = ::Vector_DotProduct(lineEnd, plane_n);
+		float t = (-plane_d - ad) / (bd - ad);
+		v3d lineStartToEnd = ::Vector_Sub(lineEnd, lineStart);
+		v3d lineToIntersect = ::Vector_Mul(lineStartToEnd, t);
+		return ::Vector_Add(lineStart, lineToIntersect);
+	}
+
+	int ClipRasterTriangleAgainstPlane(
+		const v3d& plane_p,
+		v3d plane_n,
+		const TriangleToRaster& in_tri,
+		TriangleToRaster& out_tri1,
+		TriangleToRaster& out_tri2)
+	{
+		triangle rawIn{};
+		rawIn.p[0] = in_tri.p[0];
+		rawIn.p[1] = in_tri.p[1];
+		rawIn.p[2] = in_tri.p[2];
+
+		triangle rawOut1{};
+		triangle rawOut2{};
+
+		int count = ::Triangle_ClipAgainstPlane(
+			plane_p,
+			plane_n,
+			rawIn,
+			rawOut1,
+			rawOut2
+		);
+
+		auto copyBack = [&](const triangle& raw, TriangleToRaster& out)
+			{
+				// Copy metadata first: lum, meshTriIndex, future color fields, etc.
+				out = in_tri;
+
+				// Then replace only geometry.
+				out.p[0] = raw.p[0];
+				out.p[1] = raw.p[1];
+				out.p[2] = raw.p[2];
+			};
+
+		if (count >= 1) { copyBack(rawOut1, out_tri1); }
+		if (count >= 2) { copyBack(rawOut2, out_tri2); }
+
+		return count;
+	}
+
+
+	/// <summary>
+	/// returns how many triangles are in the test after clipping across a plane 
+	/// </summary>
+	/// <param name="plane_p"></param>
+	/// <param name="plane_n"></param>
+	/// <param name="in_tri"></param>
+	/// <param name="out_tri1"></param>
+	/// <param name="out_tri2"></param>
+	/// <returns></returns>
+	int Triangle_ClipAgainstPlane(const v3d& plane_p, v3d plane_n, const triangle& in_tri, triangle& out_tri1, triangle& out_tri2)
+	{
+		// make sure plane normal is indeed normal
+		plane_n = ::Vector_Normalize(plane_n);
+
+		// Return signed shortest distance from point to plane, plane normal must be normal
+		auto dist = [&](const v3d& p)
+			{
+				v3d n = ::Vector_Normalize(p);
+				return (plane_n.x * p.x + plane_n.y * p.y + plane_n.z * p.z - ::Vector_DotProduct(plane_n, plane_p));
+			};
+
+		// Create two temp storage arrays to classify points either side of plane 
+		// if distance sign is positive, point lies on "inside" of plane
+		v3d const* inside_points[3]; int insidePointCount = 0;
+		v3d const* outside_points[3]; int outsidePointCount = 0;
+
+		// Get signed distance of each point in triangle to plane
+		float d0 = dist(in_tri.p[0]);
+		float d1 = dist(in_tri.p[1]);
+		float d2 = dist(in_tri.p[2]);
+
+		if (d0 >= 0) { inside_points[insidePointCount++] = &in_tri.p[0]; }
+		else { outside_points[outsidePointCount++] = &in_tri.p[0]; }
+		if (d1 >= 0) { inside_points[insidePointCount++] = &in_tri.p[1]; }
+		else { outside_points[outsidePointCount++] = &in_tri.p[1]; }
+		if (d2 >= 0) { inside_points[insidePointCount++] = &in_tri.p[2]; }
+		else { outside_points[outsidePointCount++] = &in_tri.p[2]; }
+
+		// now classify triabgle points, and break the input triangle into
+		// smaller output triangles if required.  There are four possible
+		//  outcomes..
+
+		if (insidePointCount == 0)
+		{
+			// all points lie on the outside of plane, so clip whole triangle
+			// it ceases to exist
+
+			return 0; // no returned tirangles are valid
+		}
+
+		if (insidePointCount == 3)
+		{
+			// all points lie on the inside of plane, so do nothing
+			// and allow the triangle to simply pass through
+
+			out_tri1 = in_tri;
+
+			return 1;
+		}
+
+		if (insidePointCount == 1 && outsidePointCount == 2)
+		{
+			// triangle should be clipped.  As two points lie outside
+			// the plane, the triangle simple becomes a smaller triangle
+
+			// copy appearance info to new triangle
+			out_tri1 = in_tri;
+
+			// the inside point is valid, so keep that
+			out_tri1.p[0] = *inside_points[0];
+
+			//but the two new points are at the locations where the
+			// original sides of the triangle (lines) intersect with the plane
+			out_tri1.p[1] = ::Vector_IntersectPlane(plane_p, plane_n, *inside_points[0], *outside_points[0]);
+			out_tri1.p[2] = ::Vector_IntersectPlane(plane_p, plane_n, *inside_points[0], *outside_points[1]);
+
+
+			return 1; // no returned tirangles are valid
+		}
+
+		if (insidePointCount == 2 && outsidePointCount == 1)
+		{
+			// triangle should be clipped.  As two points lie outside
+			// the plane, the triangle simple becomes a smaller triangle
+
+			// copy appearance info to new triangle
+			out_tri1 = in_tri;
+			out_tri2 = in_tri;
+
+			// the inside point is valid, so keep that
+			out_tri1.p[0] = *inside_points[0];
+			out_tri1.p[1] = *inside_points[1];
+			out_tri1.p[2] = ::Vector_IntersectPlane(plane_p, plane_n, *inside_points[0], *outside_points[0]);
+
+			out_tri2.p[0] = *inside_points[1];
+			out_tri2.p[1] = out_tri1.p[2];
+			out_tri2.p[2] = ::Vector_IntersectPlane(plane_p, plane_n, *inside_points[1], *outside_points[0]);
+
+			return 2; // no returned tirangles are valid
+		}
+
 	}
 
 	v3d Vector_Add(const v3d & v1, const v3d & v2)
@@ -748,7 +1111,7 @@ namespace {
 		// 0.98 means only draw edges where faces differ by about 11 degrees or more.
 		// For blocky models, try 0.95 or 0.90 if you want more chunky hard edges.
 	    //constexpr float CREASE_DOT_THRESHOLD = 01.0000015f;
-		constexpr float CREASE_DOT_THRESHOLD = 0.0f;
+		constexpr float CREASE_DOT_THRESHOLD = 0.98f;
 
 		//constexpr float CREASE_DOT_THRESHOLD = -100.01f;
 
