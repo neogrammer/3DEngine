@@ -315,7 +315,7 @@ int ClipRasterTriangleAgainstPlane(const v3d& plane_p,	v3d plane_n,	const Triang
 
 int main()
 {
-	meshCube.LoadObjectFile("assets/models/axis_fixed.obj");
+	meshCube.LoadObjectFile("assets/models/mountains.obj");
 	::BuildMeshEdges(meshCube);
 
 	matProj = ::Matrix_MakeProjection(90.f, height / width, 0.1f, 1000.f);
@@ -418,12 +418,12 @@ bool update(float dt_)
 
 	m4x4 matRotZ, matRotX, matRotY;
 	theta = 90.f;
-	matRotZ = ::Matrix_MakeRotationZ(toRadians(0.f));
+	matRotZ = ::Matrix_MakeRotationZ(toRadians(180.f));
 	matRotY = ::Matrix_MakeRotationY(toRadians(0.f));
 
-	matRotX = ::Matrix_MakeRotationX(toRadians(-90.f));
+	matRotX = ::Matrix_MakeRotationX(toRadians(0.f));
 	m4x4 matTrans;
-	matTrans = ::Matrix_MakeTranslation(4.f, 3.f, 19.5f);
+	matTrans = ::Matrix_MakeTranslation(-14.f, 12.f, 19.5f);
 	m4x4 matWorld;
 	matWorld = ::Matrix_MakeIdentity();
 	matWorld = ::Matrix_MultiplyMatrix(matRotZ, matRotX);
@@ -630,7 +630,7 @@ void render(sf::RenderWindow& wnd)
 		::RasterizeTriangleDepth(tri);
 	}
 
-	::RasterizeVisibleMeshOutlineDepth();
+	// ::RasterizeVisibleMeshOutlineDepth();
 
 	frameTexture.update(framePixels.data());
 	sf::Sprite frameSprite(frameTexture);
@@ -995,8 +995,8 @@ namespace {
 		for (size_t i = 0; i < framePixels.size(); i += 4)
 		{
 			framePixels[i + 0] = 0;   // R
-			framePixels[i + 1] = 20;   // G
-			framePixels[i + 2] = 40;   // B
+			framePixels[i + 1] = 0;   // G
+			framePixels[i + 2] = 0;   // B
 			framePixels[i + 3] = 255; // A
 		}
 	}
